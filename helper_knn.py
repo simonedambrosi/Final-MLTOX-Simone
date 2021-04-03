@@ -88,7 +88,7 @@ def euclidean_matrix(X, num_features):
     return squareform(pdist(X[num_features], metric = "euclidean"))
 
 def pubchem2d_matrix(X):
-    return squareform(pdist(X[X.columns[X.columns.str.contains('pub')][1:]],  metric = 'hamming'))
+    return squareform(pdist(X[X.columns[X.columns.str.contains('pub')]],  metric = 'hamming'))
 
 def tanimoto_matrix(X):
     return squareform(GetTanimotoDistMat(X['pubchem2d'].apply(CreateFromBitString).to_list()))

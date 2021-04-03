@@ -87,7 +87,7 @@ def euclidean_matrix(X, num_features):
     return squareform(pdist(X[num_features], metric = "euclidean"))
 
 def pubchem2d_matrix(X):
-    return squareform(pdist(X[X.columns[X.columns.str.contains('pub')][1:]],  metric = 'hamming'))
+    return squareform(pdist(X[X.columns[X.columns.str.contains('pub')]],  metric = 'hamming'))
 
 def euc_ham_pub_matrix(X, num_features, cat_features, a_ham, a_pub):
     return a_ham * hamming_matrix(X, cat_features) + euclidean_matrix(X, num_features) + a_pub * pubchem2d_matrix(X)
