@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 from sklearn.preprocessing import OrdinalEncoder, MinMaxScaler
-from sklearn.model_selection import KFold, ParameterSampler
+from sklearn.model_selection import KFold, train_test_split, ParameterSampler
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import recall_score, confusion_matrix, accuracy_score, f1_score
@@ -153,31 +153,6 @@ def create_label_rasar(path_mortality, path_datafusion):
             lambda x: find_similar_exp(x, group, comparing), axis = 1).reset_index(drop = True)
         
     return db_datafusion_rasar_label    
-    
-
-def df_datafusion_rasar(db_datafusion, db):
-
-    grouped_datafusion = db_datafusion.groupby(by=['endpoint', 'effect', 'target'])
-
-    db_datafusion_rasar = pd.DataFrame()
-
-    for group in grouped_datafusion.groups:
-
-        name = group[0] + '_' + group[1] + '_' + str(group[2])
-
-        train_X = grouped_datafusion.get_group(group).drop(columns = ['endpoint', 'effect', 'target'])
-        test_X = db.copy()
-
-        train_y = grouped_datafusion.get_group(group)['target'].values
-
-        knn = KNeighborsClassifier(n_jobs = -1, n_neighbors = 1)
-        knn.fit(train_X, train_y)
-
-        neigh = knn.kneighbors(test_X, return_distance = True)
-
-        db_datafusion_rasar[name] = neigh[0].ravel()
-        
-    return db_datafusion_rasar
 
 
 def rasar_train_test(db_train, db_test, y_train, y_test, db_datafusion, db_label):
@@ -314,9 +289,9 @@ def unsuper_datafusion_rasar(db_mortality_train, db_mortality_test, db_datafusio
         train_matrix = euclidean_matrix(train_db, non_categorical)/max_value + ham_pub_matrix(
             train_db, categorical, a_ham = 0.07498942093324558, a_pub = 0.5623413251903491)        
         
-        test_train_matrix = euclidean_matrix_datafusion(db_mortality_train, train_db, non_categorical)/max_value + ham_pub_matrix_datafusion(X, Y, cat_features, a_ham = 0.07498942093324558, a_pub = 0.5623413251903491)
+        test_train_matrix = euclidean_matrix_datafusion(db_mortality_train, train_db, non_categorical)/max_value + ham_pub_matrix_datafusion(db_mortality_train, train_db, categorical, a_ham = 0.07498942093324558, a_pub = 0.5623413251903491)
         
-        test_test_matrix = euclidean_matrix_datafusion(db_mortality_test, train_db, non_categorical)/max_value + ham_pub_matrix_datafusion(X, Y, cat_features, a_ham = 0.07498942093324558, a_pub = 0.5623413251903491)
+        test_test_matrix = euclidean_matrix_datafusion(db_mortality_test, train_db, non_categorical)/max_value + ham_pub_matrix_datafusion(db_mortality_test, train_db, categorical, a_ham = 0.07498942093324558, a_pub = 0.5623413251903491)
 
         
         knn.fit(train_matrix, train_db['conc1_mean'])
@@ -333,7 +308,7 @@ def unsuper_datafusion_rasar(db_mortality_train, db_mortality_test, db_datafusio
     return df_rasar_train, df_rasar_test
 
 
-def cv_datafusion_rasar(db_mortality, db_datafusion, db_label):
+def cv_datafusion_rasar_alpha(db_mortality, db_datafusion, db_label, params = {}):
 
     categorical = ['class', 'tax_order', 'family', 'genus', "species", 'control_type', 'media_type',
                    'application_freq_unit',"exposure_type", "conc1_type", 'obs_duration_mean']
@@ -343,11 +318,11 @@ def cv_datafusion_rasar(db_mortality, db_datafusion, db_label):
     
     kf = KFold(n_splits=5, shuffle=True, random_state = 3456)
     
-    
     print('Computing distance matrix', ctime())
-    ham_pub_matr = ham_pub_matrix(db_mortality, categorical, a_ham = 0.07498942093324558, a_pub = 0.5623413251903491)
+    ham_pub_matr = ham_pub_matrix(db_mortality, categorical,
+                                  a_ham = 0.07498942093324558, a_pub = 0.5623413251903491)
     
-    euc_matrix = euclidean_matrix(X, non_categorical)
+    euc_matrix = euclidean_matrix(db_mortality, non_categorical)
     euc_matrix = pd.DataFrame(euc_matrix)
 
     accs = []
@@ -374,19 +349,30 @@ def cv_datafusion_rasar(db_mortality, db_datafusion, db_label):
         # qua ho le matrici di distanza (train x train) e (test x train)
         # e applico il simple rasar
         simple_rasar_train, simple_rasar_test = unsuper_simple_rasar(X_train, X_test,
-                                                       db_mortality.iloc[train_index], db_mortality.iloc[test_index],
-                                                       y_train, y_test)
+                                                                     db_mortality.iloc[train_index],
+                                                                     db_mortality.iloc[test_index],
+                                                                     y_train, y_test)
         del X_train, X_test
-        
         # creo il dataset con i dati del datafusion
         datafusion_rasar_train, datafusion_rasar_test = unsuper_datafusion_rasar(db_mortality.iloc[train_index],
                                                                                  db_mortality.iloc[test_index],
                                                                                  db_datafusion, max_euc)
-        train_rf = pd.concat([simple_rasar_train[['dist_neigh0', 'dist_neigh1']], datafusion_rasar_train], axis = 1)
-        test_rf = pd.concat([simple_rasar_test[['dist_neigh0', 'dist_neigh1']], datafusion_rasar_test], axis = 1)
+        
+        train_rf = pd.concat([simple_rasar_train[['dist_neigh0', 'dist_neigh1']],
+                              datafusion_rasar_train, 
+                              db_label.iloc[train_index].reset_index(drop=True)], axis = 1)
+        
+        test_rf = pd.concat([simple_rasar_test[['dist_neigh0', 'dist_neigh1']],
+                             datafusion_rasar_test, 
+                             db_label.iloc[test_index].reset_index(drop=True)], axis = 1)
+        
+        if params == {}:
+            clf = RandomForestClassifier(n_estimators = 300, n_jobs = -2)
+        else:
+            clf = RandomForestClassifier(n_jobs = -1)
+            for k,v in params.items():
+                setattr(clf, k, v)
                 
-     
-        clf = RandomForestClassifier(n_jobs = -1)
         clf.fit(train_rf, y_train)
 
         y_pred = clf.predict(test_rf)
@@ -397,7 +383,7 @@ def cv_datafusion_rasar(db_mortality, db_datafusion, db_label):
         sens.append(recall_score(y_test, y_pred))
         specs.append(tn/(tn+fp))
         f1s.append(f1_score(y_test, y_pred))
-        print(ctime())
+        
     
     print('Accuracy:   ', np.mean(accs),  'se:', sem(accs))
     print('Sensitivity:', np.mean(sens),  'se:', sem(sens))
@@ -407,11 +393,110 @@ def cv_datafusion_rasar(db_mortality, db_datafusion, db_label):
     return
 
 
+#######################################################################################################
+##################### TUNING Hyper-Parameters #########################################################
+##################### Use only with 66% of dataset ####################################################
+#######################################################################################################
 
 
+def cv_params_datafusion_rasar_alpha(db_mortality, db_datafusion, db_label, hyper_params_tune = {}):
+    
+    params_comb = list(ParameterSampler(hyper_params_tune, n_iter = 150, random_state = 52))
+
+    test_acc = dict()
+    test_sens = dict()
+    test_spec = dict()
+    test_f1 = dict()
 
 
+    for i in range(0,len(params_comb)):
+        test_acc['mod' + str(i)] = list()
+        test_sens['mod' + str(i)] = list()
+        test_spec['mod' + str(i)] = list()
+        test_f1['mod' + str(i)] = list()
 
+    print(ctime())
+    
+    categorical = ['class', 'tax_order', 'family', 'genus', "species", 'control_type', 'media_type',
+                   'application_freq_unit',"exposure_type", "conc1_type", 'obs_duration_mean']
+
+    non_categorical = ['ring_number', 'tripleBond', 'doubleBond', 'alone_atom_number', 'oh_count',
+                       'atom_number', 'bonds_number', 'Mol', 'MorganDensity', 'LogP', 'MeltingPoint', 'WaterSolubility']
+    
+    kf = KFold(n_splits=5, shuffle=True, random_state = 3456)
+    
+    print('Computing distance matrix', ctime())
+    ham_pub_matr = ham_pub_matrix(db_mortality, categorical,
+                                  a_ham = 0.07498942093324558, a_pub = 0.5623413251903491)
+    
+    euc_matrix = euclidean_matrix(db_mortality, non_categorical)
+    euc_matrix = pd.DataFrame(euc_matrix)
+
+    accs = []
+    sens = []
+    specs = []
+    f1s = []
+    
+    n_epoch = 0
+    for train_index, test_index in kf.split(db_mortality):
+        n_epoch+=1
+        max_euc = euc_matrix.iloc[train_index, train_index].values.max()
+        
+        print('Epoch {}: '.format(n_epoch), ctime())
+        dist_matr = pd.DataFrame(ham_pub_matr + euc_matrix.divide(max_euc).values)
+    
+        X_train = dist_matr.iloc[train_index, train_index]
+        X_test = dist_matr.iloc[test_index, train_index]
+        y_train = db_mortality['conc1_mean'].iloc[train_index].copy().values
+        y_test = db_mortality['conc1_mean'].iloc[test_index].copy().values
+        
+        del dist_matr
+        
+        simple_rasar_train, simple_rasar_test = unsuper_simple_rasar(X_train, X_test,
+                                                                     db_mortality.iloc[train_index],
+                                                                     db_mortality.iloc[test_index],
+                                                                     y_train, y_test)
+        del X_train, X_test
+        # creo il dataset con i dati del datafusion
+        datafusion_rasar_train, datafusion_rasar_test = unsuper_datafusion_rasar(db_mortality.iloc[train_index],
+                                                                                 db_mortality.iloc[test_index],
+                                                                                 db_datafusion, max_euc)
+        
+        train_rf = pd.concat([simple_rasar_train[['dist_neigh0', 'dist_neigh1']],
+                              datafusion_rasar_train, 
+                              db_label.iloc[train_index].reset_index(drop=True)], axis = 1)
+        
+        test_rf = pd.concat([simple_rasar_test[['dist_neigh0', 'dist_neigh1']],
+                             datafusion_rasar_test, 
+                             db_label.iloc[test_index].reset_index(drop=True)], axis = 1)
+        
+        for i in range(0, len(params_comb)):
+            clf = RandomForestClassifier(n_jobs = -1)
+            for k,v in params_comb[i].items():
+                setattr(clf, k, v)
+            clf.fit(train_rf, y_train)
+
+            y_pred = clf.predict(test_rf)
+            tn, fp, fn, tp = confusion_matrix(y_test, y_pred).ravel()
+            
+            test_acc['mod' + str(i)].append(accuracy_score(y_test, y_pred))
+            test_sens['mod' + str(i)].append(recall_score(y_test, y_pred))
+            test_spec['mod' + str(i)].append(tn/(tn+fp))
+            test_f1['mod' + str(i)].append(f1_score(y_test, y_pred))
+    
+    print(ctime())
+            
+    tab_rf_rasar = pd.DataFrame(columns = ['test_acc', 'test_sens', 'test_spec', 'test_f1'])
+
+    tab_rf_rasar.loc[:,'test_acc'] = pd.DataFrame(test_acc).mean(axis = 0)
+    tab_rf_rasar.loc[:,'test_sens'] = pd.DataFrame(test_sens).mean(axis = 0)
+    tab_rf_rasar.loc[:,'test_spec'] = pd.DataFrame(test_spec).mean(axis = 0)
+    tab_rf_rasar.loc[:,'test_f1'] = pd.DataFrame(test_f1).mean(axis = 0)
+
+    params_df = pd.DataFrame(params_comb, index = ['mod' + str(i) for i in range(0,len(params_comb))])
+    tab_rf_rasar = pd.concat([params_df, tab_rf_rasar], axis = 1)
+    
+    return tab_rf_rasar
 
 
 
