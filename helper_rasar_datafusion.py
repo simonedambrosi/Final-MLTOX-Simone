@@ -5,7 +5,7 @@ from sklearn.preprocessing import OneHotEncoder, MinMaxScaler
 from sklearn.model_selection import KFold, ParameterSampler
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import recall_score, confusion_matrix, accuracy_score, f1_score
+from sklearn.metrics import recall_score, confusion_matrix, accuracy_score, f1_score, precision_score
 
 from collections import Counter
 

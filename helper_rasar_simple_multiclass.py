@@ -155,8 +155,6 @@ def cv_params_simple_rasar_multiclass(X, y, hyper_params_tune):
     
     params_comb = list(ParameterSampler(hyper_params_tune, n_iter = 100, random_state = 52))
 
-    kf = KFold(n_splits=5, shuffle=True, random_state = 5645)
-
     test_acc = dict()
     test_sens = dict()
     test_prec = dict()
